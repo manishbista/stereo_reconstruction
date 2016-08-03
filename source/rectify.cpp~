@@ -1,0 +1,305 @@
+#include "../header/rectify.h"
+
+rectify::rectify()
+{
+ std::cout<<std::endl<<" rectify constructor called "<<std::endl;
+ epipoleLeft = global::epipoleA;
+ epipoleRight = global::epipoleB;
+}
+
+rectify::~rectify()
+{
+ std::cout<<std::endl<<" rectify destructor called "<<std::endl;
+}
+
+void rectify::findImageCenter()
+{
+ //from inliers record and firstImagePoints & secondImagePoints, find approx. center
+
+ int num_pts = global::inliersRecord.size();
+ vector3d idealCenter = vector3d(global::SCREEN_WIDTH/2, global::SCREEN_HEIGHT/2, 1.0);
+ int minID = 0;
+ int dataID;
+ dataID = global::inliersRecord[0];
+ float minDeviation = idealCenter.distancePointsSquared(global::secondImagePoints[dataID]);
+ float dummyDeviation;
+ for(int i = 1; i < num_pts; i++)
+ {
+ 	dataID = global::inliersRecord[i];
+	dummyDeviation =  idealCenter.distancePointsSquared(global::secondImagePoints[dataID]);
+	
+ 	if(minDeviation > dummyDeviation)
+	{
+		minDeviation = dummyDeviation;
+		minID = dataID;
+	}
+ }
+ //imageCenter = global::secondImagePoints[dataID];
+ imageCenter = idealCenter;
+ std::cout<<std::endl<<" minID is  "<<minID<<std::endl;
+ imageCenter.Display("  img center");
+
+epipoleToInfinity();
+equivalentHomography();
+}
+
+void rectify::epipoleToInfinity()
+{
+	//imageCenter is the center of rightImage
+	//take epipoleB and send it to infinity via a transformation Hdash
+
+	float sin_thita = -epipoleRight.y + imageCenter.y;
+	float cos_thita = epipoleRight.x - imageCenter.x;
+	float f = cos_thita * cos_thita + sin_thita * sin_thita;
+	std::cout<<" sin thita "<<sin_thita<<" cos_thita  "<<cos_thita<<std::endl;
+
+ Matrix3f transMat;		//matrix that takes center of right image to infinity
+ transMat.m[0][0] = 1;		transMat.m[0][1] = 0;		transMat.m[0][2] = -imageCenter.x;
+ transMat.m[1][0] = 0;		transMat.m[1][1] = 1;		transMat.m[1][2] = -imageCenter.y;
+ transMat.m[2][0] = 0;		transMat.m[2][1] = 0;		transMat.m[2][2] = 1;
+
+ Matrix3f rotMat;		//matrix that takes translated epipole of right image to fall on x-axes
+ rotMat.m[0][0] = cos_thita;	rotMat.m[0][1] = -sin_thita;		rotMat.m[0][2] = 0; 
+ rotMat.m[1][0] = sin_thita;	rotMat.m[1][1] = cos_thita;		rotMat.m[1][2] = 0; 
+ rotMat.m[2][0] = 0;		rotMat.m[2][1] = 0;			rotMat.m[2][2] = 1; 
+
+ Matrix3f infMat;		//takes translated -> rotated epipole to infinity
+ infMat.m[0][0] = 1;		infMat.m[0][1] = 0;		infMat.m[0][2] = 0;
+ infMat.m[1][0] = 0;		infMat.m[1][1] = 1;		infMat.m[1][2] = 0;
+ infMat.m[2][0] = -1/f;		infMat.m[2][1] = 0;		infMat.m[2][2] = 1;
+
+ infHomoDashMat = infMat * rotMat * transMat;
+
+ Matrix3f dummyMatrix;
+ dummyMatrix.m[0][0] = 0.0;			dummyMatrix.m[0][1] = -epipoleRight.z;	dummyMatrix.m[0][2] = epipoleRight.y;
+ dummyMatrix.m[1][0] = epipoleRight.z;		dummyMatrix.m[1][1] = 0.0;		dummyMatrix.m[1][2] = -epipoleRight.x;
+ dummyMatrix.m[2][0] = -epipoleRight.y;		dummyMatrix.m[2][1] = epipoleRight.x;	dummyMatrix.m[2][2] = 0.0;
+  
+ yamMat = dummyMatrix * global::fundamentalMatrix;
+ yamMat.Display("yam");
+}
+
+
+void rectify::equivalentHomography()
+{
+ Matrix3f homoKnot = infHomoDashMat * yamMat;
+ //yaxCap = homoKnot * yax
+ //yaxCapDash = infHomoDashMat * yaxDash
+
+ int num_pts = global::inliersRecord.size();
+ vector3d yaxCap[num_pts];
+ vector3d yaxCapDash[num_pts];
+ vector3d dummyVec;
+ int dataID;
+ for(int i = 0; i < num_pts; i++)
+ {
+	dataID = global::inliersRecord[i];
+	yaxCap[i] = homoKnot * global::firstImagePoints[dataID];
+	yaxCap[i].change(yaxCap[i].x/yaxCap[i].z, yaxCap[i].y/yaxCap[i].z, 1);
+	yaxCapDash[i] = infHomoDashMat * global::secondImagePoints[dataID];
+	yaxCapDash[i].change(yaxCapDash[i].x/yaxCapDash[i].z, yaxCapDash[i].y/yaxCapDash[i].z, 1);
+ }
+
+ float sumX2 = 0.0, sumXY = 0.0, sumX = 0.0, sumXdX = 0.0, sumY2 =0.0, sumY = 0.0, sumXdY = 0.0, sumXd = 0.0;
+ float _x, _y, _xd;
+ for(int i = 0; i < num_pts; i++)
+ {
+	_x = yaxCap[i].x;
+	_y = yaxCap[i].y;
+	_xd= yaxCapDash[i].x;
+
+	sumX2 += _x * _x;
+	sumXY += _x * _y;
+	sumX  += _x;
+	sumXdX+= _xd * _x;
+	sumY2 += _y * _y;
+	sumY  += _y;
+	sumXdY+= _xd * _y;
+	sumXd += _xd;
+ }
+
+ float **augmentMatrix;
+ augmentMatrix = new float*[3];
+ for(int i = 0; i < 3; i++)
+	augmentMatrix[i] = new float[4];
+ augmentMatrix[0][0] = sumX2;	augmentMatrix[0][1] = sumXY;	augmentMatrix[0][2] = sumX;		augmentMatrix[0][3] = -sumXdX;
+ augmentMatrix[1][0] = sumXY;	augmentMatrix[1][1] = sumY2;	augmentMatrix[1][2] = sumY;		augmentMatrix[1][3] = -sumXdY;
+ augmentMatrix[2][0] = sumX;	augmentMatrix[2][1] = sumY;	augmentMatrix[2][2] = num_pts;		augmentMatrix[2][3] = -sumXd;
+
+std::cout<<std::endl<<" augmented Matrix here "<<std::endl;
+for(int i = 0; i < 3; i++)
+{
+ std::cout<<std::endl;
+	for(int j = 0; j < 4; j++)
+	{
+		std::cout<<"   "<<augmentMatrix[i][j]<<"   ";
+
+	}
+}
+ float outVec[4] = {-0.351434418, -0.000007804, -1.300768262, 1.0};
+ //solutionSVD(augmentMatrix, 3, 4, outVec);
+ 
+ Matrix3f homoMatA;
+ homoMatA.m[0][0] = outVec[0]/outVec[3];		homoMatA.m[0][1] = outVec[1]/outVec[3];		homoMatA.m[0][2] = outVec[2]/outVec[3];
+ homoMatA.m[1][0] = 0;					homoMatA.m[1][1] = 1;				homoMatA.m[1][2] = 0;
+ homoMatA.m[2][0] = 0;					homoMatA.m[2][1] = 0;				homoMatA.m[2][2] = 1;
+
+ homoMatA.Display("matA");
+
+ eqvHomoMat = homoMatA * homoKnot;
+ eqvHomoMat.Display("eqvMat");
+ infHomoDashMat.Display("homoDash");
+ vector3d first, second;
+ for(int i = 0; i < num_pts; i++)
+ {
+	dataID = global::inliersRecord[i];
+	first = eqvHomoMat * global::firstImagePoints[dataID];
+	first.change(first.x/first.z, first.y/first.z, 1.0);
+	second = infHomoDashMat * global::secondImagePoints[dataID];
+	second.change(second.x/second.z, second.y/second.z, 1.0);
+	first.Display("fr");
+	second.Display("ss");
+	
+ }
+	(infHomoDashMat * epipoleRight).Display("epipole");
+	delete[] augmentMatrix;
+}
+
+
+
+void rectify::solutionSVD(float **inputMat, int numRow, int numCol, float *outputMat)
+{
+ //output mat is a square matrix having numCol elements
+ //input Matrix is [A](R * C), it's transpose is [A](C * R)
+ //then symmetric matrix is [AtA](C * C)
+
+ float symmetricMat[numCol][numCol * 2];
+ float matSum = 0.0;
+ for(int i = 0; i < numCol; i++)
+ {
+	for(int j = 0; j < numCol; j++)
+	{
+		matSum = 0.0;
+		for(int k = 0; k < numRow; k++)
+			matSum += inputMat[k][i] * inputMat[k][j];
+		symmetricMat[i][j] = matSum;
+	}
+ }
+
+ //symmetric matrix thus formed needs to be inverted
+ //taking into account the possibility of singular matrix,
+ //perform gauss inversion
+
+    //augment identity matrix
+    for(int i = 0; i < numCol; i++)
+    {
+        for(int j = numCol; j < numCol * 2; j++)
+        {
+            if(j - i == numCol) symmetricMat[i][j] = 1;
+            else symmetricMat[i][j] = 0;
+        }
+    }
+
+    //elementary row operation
+    for(int j = 0; j < numCol; j ++)
+    {
+        for(int i = 0; i < numCol; i++)
+        {
+            if(i != j)
+            {
+                matSum = symmetricMat[i][j] / symmetricMat[j][j];
+                for(int k = 0; k < 2 * numCol; k++)
+                     symmetricMat[i][k] = symmetricMat[i][k] - matSum * symmetricMat[j][k];
+            }
+
+        }
+    }
+
+    //final identity change
+
+    for(int i = 0; i < numCol; i++)
+    {
+        matSum = symmetricMat[i][i];
+        for(int j = 0; j < numCol * 2; j ++)
+            symmetricMat[i][j] = symmetricMat[i][j] / matSum;
+
+    }
+/*
+	std::cout<<std::endl<<" inversion "<<std::endl;
+    for(int i = 0; i < numCol; i++)
+    {
+	std::cout<<std::endl;
+        for(int j = numCol; j < numCol * 2; j++)
+	{
+	 std::cout<<"  "<<symmetricMat[i][j]<<"  ";
+	}
+    }
+*/
+
+ //gauss inversion finished, pivoting is not used
+ //start power method
+ float dummyMaxEigenVec[numCol];
+ outputMat[0] = 1.0;
+ for(int i = 1; i < numCol; i++)
+	outputMat[i] = 0.0;
+
+ bool powerRepeat = true;
+ int totalCounter = 0;
+ int counter = 0;
+ float sumMat;
+ while(powerRepeat)
+ {
+ //save maxEigenVec to dummy
+	for(int i = 0; i < numCol; i++)
+	 dummyMaxEigenVec[i] = outputMat[i];
+
+ //do matrix symmetricMat and vector dummyMaxVec multiplication
+ //and store in ouputMat
+ 	for(int i = 0; i < numCol; i++)
+ 	{
+	 sumMat = 0.0;
+	 for(int j = 0; j < numCol; j++)
+	 	sumMat += symmetricMat[i][numCol + j] * dummyMaxEigenVec[j];
+	// std::cout<<" i "<<sumMat<<std::endl;
+	 outputMat[i] = sumMat;
+ 	}
+
+ //find maximum element of outputMat and divide all elements by it
+ 	sumMat = fabs(outputMat[0]);
+ 	for(int i = 1; i < numCol; i++)
+	 {if(fabs(outputMat[i]) > sumMat) sumMat = fabs(outputMat[i]);}
+
+ 	for(int i = 0; i < numCol; i++)
+	  outputMat[i] /= sumMat;
+
+ //check whether output is converging
+ 	counter = 0;
+ 	for(int i = 0; i < numCol; i++)
+  	{
+		if(fabs(dummyMaxEigenVec[i] - outputMat[i]) < 0.00005) counter++;
+  	}	
+  	totalCounter++;
+  	if(counter == numCol || totalCounter > 100) powerRepeat = false;
+
+ //if iterations stopped, make |outputMat| = 1.0;
+	if(!powerRepeat)
+		{
+		 sumMat = 0.0;
+		 for(int i = 0; i < numCol; i++)
+		   sumMat += outputMat[i] * outputMat[i];	
+		 sumMat = sqrt(sumMat); 
+		std::cout<<" sum "<<sumMat<<std::endl;
+		 for(int i = 0; i < numCol; i++){
+		   outputMat[i] /= sumMat;
+			std::cout<<" op "<< outputMat[i]<<std::endl;}
+		}
+ }
+
+	
+
+}
+
+
+
+
+

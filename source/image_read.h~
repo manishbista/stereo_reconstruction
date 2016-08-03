@@ -1,0 +1,33 @@
+#ifndef IMAGE_READ_H
+#define IMAGE_READ_H
+#include <vector>
+#include <map>
+#include <GL/glew.h>
+#include <bitset>
+#include <math.h>
+
+
+class imageRead
+{
+private:
+int numTex;
+unsigned int FBO5, FBO5_2, FBO4, FBO4_2;
+std::vector<float>pX_2[7];
+std::vector<int>cornerCount_2;
+std::vector<float>pX[7];
+std::vector<int>cornerCount;
+void pixelRead();
+void pixelRead_2();
+
+
+public:
+imageRead(global *instantGlobal);
+void pointDescript(global *instantGlobal);
+void initialize();
+
+};
+
+
+
+#endif
+

@@ -1,0 +1,8 @@
+#version 130
+attribute vec3 lineVertex;
+
+uniform mat4 modelViewProjectionMatrix;
+void main()
+{
+	gl_Position = modelViewProjectionMatrix * vec4(lineVertex,1.0);
+}

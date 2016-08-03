@@ -1,0 +1,14 @@
+uniform sampler2D empty_textures;
+uniform sampler2D dot_textures;
+varying vec2 outUV;
+varying mat3 hMat;
+varying mat3 hdMat;
+
+void main()
+{
+ vec4 outA = texture2D(empty_textures, outUV);
+	vec3 outB = hMat * vec3(outA.x, outA.y, outA.z);
+ //vec4 outB = texture2D(dot_textures, outUV);
+ gl_FragColor = vec4(outB, 1.0);
+ //gl_FragColor = vec4(outB.x * 0.9 + outA.x * 0.1, outA.y * 0.1, outA.z * 0.1, 1.0);
+}

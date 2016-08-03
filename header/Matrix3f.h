@@ -1,0 +1,43 @@
+#ifndef MATRIX3F_H
+#define MATRIX3F_H
+
+#include <iostream>
+#include "vector3d.h"
+#include "LMatrix3f.h"
+
+class Matrix3f
+{
+ private:
+	float sum;
+ public:
+	float m[3][3];
+	vector3d row;
+	Matrix3f();
+	Matrix3f(float a00, float a01, float a02,
+		 float a10, float a11, float a12,
+		 float a20, float a21, float a22);
+	Matrix3f(float mat[][3]);
+	Matrix3f(float *mat);
+	void SetIdentity();
+	void SetZero();
+	void Transpose();
+	Matrix3f ReturnTranspose();
+	void AsymmetricMatrix(vector3d vec);
+	float Determinant();
+	void operator=(const Matrix3f mat);
+	void operator=(const LMatrix3f mat);
+	Matrix3f operator+(const Matrix3f mat);
+	Matrix3f operator-(const Matrix3f mat);
+	Matrix3f operator*(const Matrix3f mat);
+	Matrix3f operator*(float var);
+	Matrix3f operator/(float var);
+	vector3d operator*(vector3d vec);
+	bool operator==(const Matrix3f mat);
+	void Inverse();
+	void Display();
+	void Display(const char* name);
+	Matrix3f ReturnSymmetric();
+	vector3d& getRow(int rowID);
+};
+
+#endif

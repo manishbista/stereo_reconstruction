@@ -1,0 +1,22 @@
+#ifndef RECTIFY_H
+#define RECTIFY_H
+#include "global.h"
+
+class rectify : public global
+{
+ private:
+	vector3d epipoleLeft, epipoleRight;
+	vector3d imageCenter;
+	Matrix3f infHomoDashMat;
+	Matrix3f eqvHomoMat;
+	Matrix3f yamMat;
+	void solutionSVD(float **inputMat, int numRow, int numCol, float *outputMat)
+ public:
+	rectify();
+	~rectify();
+	void findImageCenter();
+	void epipoleToInfinity();
+	void equivalentHomography();
+};
+
+#endif

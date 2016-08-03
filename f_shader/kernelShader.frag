@@ -1,0 +1,116 @@
+#version 130
+uniform sampler2D gray_textures;
+varying vec2 outUV;
+varying float outID;
+
+highp float kernelH_0, kernelH_1, kernelH_2, kernelH_3;
+highp float kernelV_0, kernelV_1, kernelV_2, kernelV_3;
+float SCREEN_WIDTH = 800.0, SCREEN_HEIGHT = 600.0;
+vec2 position;
+
+void main()
+{
+	if(outID == 0.0)
+	{
+	position = outUV;
+	position.x = outUV.x - 0.4285714286 / SCREEN_WIDTH;
+	kernelH_0 = texture2D(gray_textures, position).r * 0.7;
+	position.x = outUV.x + 0.4285714286 / SCREEN_WIDTH;
+	kernelH_0 += texture2D(gray_textures, position).r * 0.7;
+
+	position = outUV;
+	kernelH_1 = texture2D(gray_textures, position).r * 0.2941176471;
+	position.x = outUV.x - 1.333333 / SCREEN_WIDTH;
+	kernelH_1 += texture2D(gray_textures, position).r * 0.3529411765;
+	position.x = outUV.x + 1.333333 / SCREEN_WIDTH;
+	kernelH_1 += texture2D(gray_textures, position).r * 0.3529411765;
+
+	position = outUV;
+	kernelH_2 = texture2D(gray_textures, position).r * 0.2270270270;
+	position.x = outUV.x - 1.3846153846 / SCREEN_WIDTH;
+	kernelH_2 += texture2D(gray_textures, position).r * 0.3162162162;
+	position.x = outUV.x + 1.3846153846 / SCREEN_WIDTH;
+	kernelH_2 += texture2D(gray_textures, position).r * 0.3162162162;
+	position.x = outUV.x - 3.2307692308 / SCREEN_WIDTH;
+	kernelH_2 += texture2D(gray_textures, position).r * 0.0702702703;
+	position.x = outUV.x + 3.2307692308 / SCREEN_WIDTH;
+	kernelH_2 += texture2D(gray_textures, position).r * 0.0702702703;
+
+
+	position = outUV;
+	kernelH_3 = texture2D(gray_textures, position).r * 0.1762041097;
+	position.x = outUV.x - 0.1428571429 / SCREEN_WIDTH;
+	kernelH_3 += texture2D(gray_textures, position).r * 0.28032472;
+	position.x = outUV.x + 0.1428571429 / SCREEN_WIDTH;
+	kernelH_3 += texture2D(gray_textures, position).r * 0.28032472;
+	position.x = outUV.x - 3.33333333 / SCREEN_WIDTH;
+	kernelH_3 += texture2D(gray_textures, position).r * 0.1108976914;
+	position.x = outUV.x + 3.33333333 / SCREEN_WIDTH;
+	kernelH_3 += texture2D(gray_textures, position).r * 0.1108976914;
+	position.x = outUV.x - 5.238095238 / SCREEN_WIDTH;
+	kernelH_3 += texture2D(gray_textures, position).r * 0.019407096;
+	position.x = outUV.x + 5.238095238 / SCREEN_WIDTH;
+	kernelH_3 += texture2D(gray_textures, position).r * 0.019407096;
+	position.x = outUV.x - 7.142857143 / SCREEN_WIDTH;
+	kernelH_3 += texture2D(gray_textures, position).r * 0.001268437647;
+	position.x = outUV.x + 7.142857143 / SCREEN_WIDTH;
+	kernelH_3 += texture2D(gray_textures, position).r * 0.001268437647;
+
+	gl_FragColor = vec4(kernelH_0, kernelH_1, kernelH_2, kernelH_3);
+//	gl_FragColor = vec4(kernelH_3, kernelH_3, kernelH_3, kernelH_3);
+
+	}
+//next
+
+	else if(outID == 1.0)
+	{
+	position = outUV;
+	position.y = outUV.y - 0.4285714286 / SCREEN_HEIGHT;
+	kernelV_0 = texture2D(gray_textures, position).r * 0.7;
+	position.y = outUV.y + 0.4285714286 / SCREEN_HEIGHT;
+	kernelV_0 += texture2D(gray_textures, position).r * 0.7;
+
+	position = outUV;
+	kernelV_1 = texture2D(gray_textures, position).r * 0.2941176471;
+	position.y = outUV.y - 1.333333 / SCREEN_HEIGHT;
+	kernelV_1 += texture2D(gray_textures, position).r * 0.3529411765;
+	position.y = outUV.y + 1.333333 / SCREEN_HEIGHT;
+	kernelV_1 += texture2D(gray_textures, position).r * 0.3529411765;
+
+	position = outUV;
+	kernelV_2 = texture2D(gray_textures, position).r * 0.2270270270;
+	position.y = outUV.y - 1.3846153846 / SCREEN_HEIGHT;
+	kernelV_2 += texture2D(gray_textures, position).r * 0.3162162162;
+	position.y = outUV.y + 1.3846153846 / SCREEN_HEIGHT;
+	kernelV_2 += texture2D(gray_textures, position).r * 0.3162162162;
+	position.y = outUV.y - 3.2307692308 / SCREEN_HEIGHT;
+	kernelV_2 += texture2D(gray_textures, position).r * 0.0702702703;
+	position.y = outUV.y + 3.2307692308 / SCREEN_HEIGHT;
+	kernelV_2 += texture2D(gray_textures, position).r * 0.0702702703;
+
+
+	position = outUV;
+	kernelV_3 = texture2D(gray_textures, position).r * 0.1762041097;
+	position.y = outUV.y - 0.1428571429 / SCREEN_HEIGHT;
+	kernelV_3 += texture2D(gray_textures, position).r * 0.28032472;
+	position.y = outUV.y + 0.1428571429 / SCREEN_HEIGHT;
+	kernelV_3 += texture2D(gray_textures, position).r * 0.28032472;
+	position.y = outUV.y - 3.33333333 / SCREEN_HEIGHT;
+	kernelV_3 += texture2D(gray_textures, position).r * 0.1108976914;
+	position.y = outUV.y + 3.33333333 / SCREEN_HEIGHT;
+	kernelV_3 += texture2D(gray_textures, position).r * 0.1108976914;
+	position.y = outUV.y - 5.238095238 / SCREEN_HEIGHT;
+	kernelV_3 += texture2D(gray_textures, position).r * 0.019407096;
+	position.y = outUV.y + 5.238095238 / SCREEN_HEIGHT;
+	kernelV_3 += texture2D(gray_textures, position).r * 0.019407096;
+	position.y = outUV.y - 7.142857143 / SCREEN_HEIGHT;
+	kernelV_3 += texture2D(gray_textures, position).r * 0.001268437647;
+	position.y = outUV.y + 7.142857143 / SCREEN_HEIGHT;
+	kernelV_3 += texture2D(gray_textures, position).r * 0.001268437647;
+
+	gl_FragColor = vec4(kernelV_0, kernelV_1, kernelV_2, kernelV_3);
+	//gl_FragColor = vec4(kernelV_3, kernelV_3, kernelV_3, kernelV_3);
+
+	}
+
+}

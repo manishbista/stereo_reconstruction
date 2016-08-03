@@ -1,0 +1,58 @@
+#ifndef MISC_H
+#define MISC_H
+
+#include <iostream>
+
+float SCREEN_WIDTH = 800;
+float SCREEN_HEIGHT = 600;
+
+struct dataPoints
+{
+ float firstWidth, firstHeight, secondWidth, secondHeight;
+ dataPoints(int dataID, bool secondOnly = true)
+	{
+	
+	if(secondOnly)
+	{
+	 firstHeight = locationMap[dataID]/SCREEN_WIDTH;
+	 firstWidth = (locationMap[dataID] - SCREEN_WIDTH * (int)firstHeight)/SCREEN_WIDTH;
+	 firstHeight /= SCREEN_HEIGHT;
+	}
+	 
+	 secondHeight = locationMap_2[dataID]/SCREEN_WIDTH;
+	 secondWidth = (locationMap_2[dataID] - SCREEN_WIDTH * (int)secondHeight)/SCREEN_WIDTH;
+	 secondHeight /= SCREEN_HEIGHT;
+	}
+ dataPoints(int dataID, float* transVec, float *transVecdash)
+	{
+
+	 firstHeight = locationMap[dataID]/SCREEN_WIDTH;
+	 firstWidth = (locationMap[dataID] - SCREEN_WIDTH * (int)firstHeight)/SCREEN_WIDTH;
+	 firstHeight /= SCREEN_HEIGHT;
+	 transVec[0] = firstWidth;
+	 transVec[1] = firstHeight;
+	 transVec[2] = 1.0;
+
+	 secondHeight = locationMap_2[dataID]/SCREEN_WIDTH;
+	 secondWidth = (locationMap_2[dataID] - SCREEN_WIDTH * (int)secondHeight)/SCREEN_WIDTH;
+	 secondHeight /= SCREEN_HEIGHT;
+	 transVecdash[0] = secondWidth;
+	 transVecdash[1] = secondHeight;
+	 transVecdash[2] = 1.0;
+	}
+};
+
+
+struct rectPoints
+{
+ float width, height, val;
+ rectPoints(int dataID)
+ {
+	 height = locationMap[dataID]/SCREEN_WIDTH;
+	 width = (locationMap[dataID] - SCREEN_WIDTH * (int)height);
+	 val = (width - SCREEN_WIDTH/2) * (width - SCREEN_WIDTH/2) + (height - SCREEN_HEIGHT/2) * (height - SCREEN_HEIGHT/2);
+ }
+};
+
+
+#endif

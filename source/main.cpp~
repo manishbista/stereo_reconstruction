@@ -1,0 +1,1719 @@
+#include <GL/glew.h>
+#include <SDL2/SDL_opengl.h>
+#include "../header/meshLoader.h"
+#include "../header/shader.h"
+#include "../header/matrices.h"
+#include "../header/lines.h"
+#include "../header/Matrix3f.h"
+#include "../header/image_read.h"
+#include "../header/global.h"
+
+#include <map>
+#include <time.h>
+#include <assert.h>
+
+
+
+float SCREEN_WIDTH = 800;
+float SCREEN_HEIGHT = 600;
+
+void sidel(Matrix3f& homographyMat, float** coeffMat, int num_pts);
+float powerSVD(Matrix3f fund, Matrix3f& orthoMatU, Matrix3f& diagMat, Matrix3f& orthoMat);
+void gaussElimination(float mat[][4], float* outVec);
+void parameterMinimization(float **yax, float **yaxDash, int vecSize, float* outVec);
+void normalization(std::vector<int> maybeInliersRecord, float matTranScale[][3], float matTranScaleDash[][3]);
+void displayInit();
+void ransac();
+void fundamentalMatrixEstimate();
+void rectification();
+void connectingDots();
+void checkDots();
+
+SDL_Window* gWindow;
+SDL_Surface* gScreenSurface;
+matrices pipeline;
+glm::mat4 modelMatrix;
+glm::mat4 viewMatrix;
+glm::mat4 projectionMatrix;
+
+meshLoader *scene, *scene2;
+meshLoader *comboScene;
+mesh* quad;
+lines *connectDots;
+
+shader* shades;
+shader* texturingShades;
+shader* texturingShades2;
+shader* harrisShades;
+shader* cornerShades;
+shader* emptyShades;
+shader* cornerShades_2;
+shader* attachedShades;
+shader* lineShades;
+shader* disparityShades;
+imageRead* reader;
+
+unsigned int FBO, FBO2, FBO2_2, FBO3, FBO4, FBO4_2;
+unsigned int FBO5, FBO5_2;
+unsigned int textureMap, preBlurredImage, blurredImage, cornerImage, superImage, superImage_2;	
+
+unsigned int texOne, texTwo, texThree, texFour, texFive, texSix;
+unsigned int texOne_2, texTwo_2, texThree_2, texFour_2, texFive_2, texSix_2;
+
+unsigned int grayFBO;
+unsigned int grayTexture;
+shader* grayShades;
+
+unsigned int grayFBO_2;
+unsigned int grayTexture_2;
+shader* grayShades_2;
+
+shader* orientShades;
+unsigned int orientFBO, orientFBO_2;
+unsigned int orientTexture, orientTexture_2;
+
+std::vector<vector3d>g_points;
+
+struct dataPoints
+{
+ float firstWidth, firstHeight, secondWidth, secondHeight;
+ dataPoints(int dataID, bool secondOnly = true)
+	{
+	
+	if(secondOnly)
+	{
+	 firstHeight = reader->locationMap[dataID]/SCREEN_WIDTH;
+	 firstWidth = (reader->locationMap[dataID] - SCREEN_WIDTH * (int)firstHeight)/SCREEN_WIDTH;
+	 firstHeight /= SCREEN_HEIGHT;
+	}
+	 
+	 secondHeight = reader->locationMap_2[dataID]/SCREEN_WIDTH;
+	 secondWidth = (reader->locationMap_2[dataID] - SCREEN_WIDTH * (int)secondHeight)/SCREEN_WIDTH;
+	 secondHeight /= SCREEN_HEIGHT;
+	}
+
+ dataPoints(int dataID, vector3d& transVec, vector3d& transVecdash)
+	{
+
+	 firstHeight = reader->locationMap[dataID]/SCREEN_WIDTH;
+	 firstWidth = (reader->locationMap[dataID] - SCREEN_WIDTH * (int)firstHeight)/SCREEN_WIDTH;
+	 firstHeight /= SCREEN_HEIGHT;
+	 transVec.x = firstWidth;
+	 transVec.y = firstHeight;
+	 transVec.z = 1.0;
+
+	 secondHeight = reader->locationMap_2[dataID]/SCREEN_WIDTH;
+	 secondWidth = (reader->locationMap_2[dataID] - SCREEN_WIDTH * (int)secondHeight)/SCREEN_WIDTH;
+	 secondHeight /= SCREEN_HEIGHT;
+	 transVecdash.x = secondWidth;
+	 transVecdash.y = secondHeight;
+	 transVecdash.z = 1.0;
+	}
+ float getFirstWidth() {return firstWidth * SCREEN_WIDTH;}
+ float getFirstHeight() {return firstHeight * SCREEN_HEIGHT;}
+ float getSecondWidth() {return secondWidth * SCREEN_WIDTH;}
+ float getSecondHeight() {return secondHeight * SCREEN_HEIGHT;}
+};
+
+
+struct rectPoints
+{
+ float width, height, val;
+ rectPoints(int dataID)
+ {
+	 height = reader->locationMap[dataID]/SCREEN_WIDTH;
+	 width = (reader->locationMap[dataID] - SCREEN_WIDTH * (int)height);
+	 val = (width - SCREEN_WIDTH/2) * (width - SCREEN_WIDTH/2) + (height - SCREEN_HEIGHT/2) * (height - SCREEN_HEIGHT/2);
+ }
+};
+
+unsigned int createTexture(int w,int h,bool isDepth=false)
+{
+	unsigned int textureId;
+	glEnable(GL_TEXTURE_2D);
+	glGenTextures(1,&textureId);
+	glBindTexture(GL_TEXTURE_2D,textureId);
+	glTexImage2D(GL_TEXTURE_2D,0,(!isDepth ? GL_RGBA8 : GL_DEPTH_COMPONENT),w,h,0,isDepth ? GL_DEPTH_COMPONENT : GL_RGBA,GL_FLOAT,NULL);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_BORDER);
+	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_BORDER);
+	
+	int i;
+	i=glGetError();
+	if(i!=0)
+	{
+		std::cout << "Error happened while loading the texture: " << gluErrorString(i) << std::endl;
+	}
+	glBindTexture(GL_TEXTURE_2D,0);
+	return textureId;
+}
+
+unsigned int  lTime, cTime;
+void init()
+{
+	pipeline.matrixMode(PROJECTION_MATRIX);
+	pipeline.loadIdentity();
+	//pipeline.perspective(50,SCREEN_WIDTH/SCREEN_HEIGHT, 1, 1000);
+	pipeline.ortho(-1.0, 1.0, -1.0, 1.0, 1.0, 100);
+	glEnable(GL_DEPTH_TEST);
+
+	shades = new shader("../v_shader/simpleShader.vs","../f_shader/simpleShader.frag");
+	texturingShades = new shader("../v_shader/textureShader.vs","../f_shader/textureShader.frag");
+	texturingShades2 = new shader("../v_shader/textureShader2.vs","../f_shader/textureShader2.frag");
+	harrisShades = new shader("../v_shader/harrisShader.vs","../f_shader/harrisShader.frag");
+	cornerShades = new shader("../v_shader/cornerShader.vs","../f_shader/cornerShader.frag");
+	emptyShades = new shader("../v_shader/emptyShader.vs","../f_shader/emptyShader.frag");	
+	grayShades = new shader("../v_shader/grayShader.vs","../f_shader/grayShader.frag");	
+	grayShades_2 = new shader("../v_shader/grayShader_2.vs","../f_shader/grayShader_2.frag");	
+	cornerShades_2 = new shader("../v_shader/cornerShader_2.vs","../f_shader/cornerShader_2.frag");
+	attachedShades = new shader("../v_shader/attachedShader.vs","../f_shader/attachedShader.frag");
+	orientShades = new shader("../v_shader/orientShader.vs","../f_shader/orientShader.frag");
+	lineShades = new shader("../v_shader/lineShader.vs","../f_shader/lineShader.frag");
+	disparityShades = new shader("../v_shader/disparityShader.vs","../f_shader/disparityShader.frag");
+
+	scene = new meshLoader("cones/imL.png");
+	scene2 = new meshLoader("cones/imR.png");
+	comboScene = new meshLoader("cones/imL.png", "cones/imR.png");
+
+
+	textureMap = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	preBlurredImage = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	blurredImage = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	cornerImage = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	superImage = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	superImage_2 = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	grayTexture = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	grayTexture_2 = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texOne = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texTwo = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texThree = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texFour = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texFive = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texSix = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texOne_2 = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texTwo_2 = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texThree_2 = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texFour_2 = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texFive_2 = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	texSix_2 = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	orientTexture = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+	orientTexture_2 = createTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
+
+//framebuffer
+/*
+GLint maxAttach = 0;
+glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxAttach);
+GLint maxDrawBuf = 0;
+glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuf);
+std::cout<<std::endl<<" maxAt "<<maxAttach<<" and maxBuf "<<maxDrawBuf<<std::endl;
+*/
+
+	int i;
+	glGenFramebuffers(1, &FBO);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,textureMap,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+
+	//next framebuffer
+	glGenFramebuffers(1, &FBO2);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO2);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,preBlurredImage,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	//next framebuffer
+	glGenFramebuffers(1, &FBO3);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO3);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,cornerImage,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	glGenFramebuffers(1, &FBO2_2);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO2_2);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, blurredImage,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	//next framebuffer
+	glGenFramebuffers(1, &FBO3);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO3);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,cornerImage,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	glGenFramebuffers(1, &FBO4);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO4);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, superImage,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	glGenFramebuffers(1, &FBO4_2);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO4_2);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, superImage_2,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+
+	glGenFramebuffers(1, &grayFBO);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,grayFBO);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, grayTexture,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	glGenFramebuffers(1, &grayFBO_2);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,grayFBO_2);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, grayTexture_2,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	glGenFramebuffers(1, &orientFBO);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,orientFBO);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, orientTexture,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	glGenFramebuffers(1, &orientFBO_2);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,orientFBO_2);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, orientTexture_2,0);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+
+	glGenFramebuffers(1, &FBO5);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO5);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, texOne,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT1,GL_TEXTURE_2D, texTwo,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT2,GL_TEXTURE_2D, texThree,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT3,GL_TEXTURE_2D, texFour,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT4,GL_TEXTURE_2D, texFive,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT5,GL_TEXTURE_2D, texSix,0);
+	GLenum bufs[6] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4,
+			GL_COLOR_ATTACHMENT5};
+	glDrawBuffers(6, bufs);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+
+	glGenFramebuffers(1, &FBO5_2);
+	glEnable(GL_TEXTURE_2D);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO5_2);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, texOne_2,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT1,GL_TEXTURE_2D, texTwo_2,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT2,GL_TEXTURE_2D, texThree_2,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT3,GL_TEXTURE_2D, texFour_2,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT4,GL_TEXTURE_2D, texFive_2,0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT5,GL_TEXTURE_2D, texSix_2,0);
+	GLenum buf[6] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4,
+			GL_COLOR_ATTACHMENT5};
+	glDrawBuffers(6, buf);
+
+	i=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if(i!=GL_FRAMEBUFFER_COMPLETE)
+	{
+		std::cout << "Framebuffer is not OK, status=" << i << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+
+	{
+		std::vector<unsigned int> indices;
+		std::vector<vertexData> vertices;
+		indices.clear();	vertices.clear();
+		indices.reserve(6);	vertices.reserve(4);
+		vertexData tmp;
+		//1.
+		tmp.position.change(-1.0,1.0,-1.00);
+		tmp.U=0;
+		tmp.V=1;
+		vertices.push_back(tmp);
+		//2.
+		tmp.position.change(-1.0,-1.0,-1.00);
+		tmp.U=0;
+		tmp.V=0;
+		vertices.push_back(tmp);
+		//3.
+		tmp.position.change(1.0,-1.0,-1.00);
+		tmp.U=1;
+		tmp.V=0;
+		vertices.push_back(tmp);
+		//4.
+		tmp.position.change(1.0,1.0,-1.00);
+		tmp.U=1;
+		tmp.V=1;
+		vertices.push_back(tmp);
+		
+		indices.push_back(0);
+		indices.push_back(1);
+		indices.push_back(2);		
+		
+		indices.push_back(0);
+		indices.push_back(2);
+		indices.push_back(3);
+		quad = new mesh(&vertices,&indices);
+	}
+
+reader = new imageRead(FBO5, FBO5_2, FBO4, FBO4_2);
+lTime = SDL_GetTicks();
+displayInit();
+cTime = SDL_GetTicks();
+
+std::cout<<" lTime "<<lTime<<" cTime "<<cTime<<" and diff "<<cTime - lTime<<std::endl;
+reader->pixelRead();
+reader->pixelRead_2();
+reader->oneMatrix();
+
+ransac();
+fundamentalMatrixEstimate();
+rectification();
+//connectingDots();
+//checkDots();
+cTime = SDL_GetTicks();
+std::cout<<" lTime "<<lTime<<" cTime "<<cTime<<" and diff "<<cTime - lTime<<std::endl;
+}
+
+//void sidel(float homographyMat[][3], float** coeffMat, int num_pts)	//num_pts defines number of rows
+
+
+std::vector<int>maybeInliers;			//initial approximation to inliers
+std::vector<int>maybeInliersRecord;
+//end of det
+void ransac()
+{
+int i, j, k, l;
+float sum = 0.0, sumMat = 0.0;
+int _size = 9;					//size of homography
+int len = 3;	
+int num_pts = 4;				//how many points to start with
+int interval = reader->locationMap.size()/num_pts;	//to randomly select data, obtain interval
+int inliersCount = 0;
+
+int maxIterationCounter = 0;
+int maxIterations = 5;				//the number of times RANSAC is to repeat
+int totalInliersCount[maxIterations];
+totalInliersCount[0] = num_pts;			//first four data are considered inliers
+
+std::bitset<128>isInlierSet;			//boolean value to check whether the corresponding coord is already set as an inlier
+isInlierSet.reset();
+
+std::vector<int>alsoInliers;
+std::vector<int>nonInliers;
+maybeInliers.clear();
+maybeInliers.reserve(reader->locationMap.size());
+			
+vector3d obj;
+vector3d img;
+float diff;
+
+//float homographyMat[3][3];	
+Matrix3f homographyMat;
+maybeInliersRecord.clear();
+maybeInliersRecord.reserve(reader->locationMap.size());
+//push (initial approximation to inlier)'s ID
+ for(i = 0; i < num_pts; i++)
+ {
+	maybeInliers.push_back(i * interval);
+	maybeInliersRecord.push_back(i * interval);
+	isInlierSet[i * interval] = 1;
+ }
+
+//symmetric matrix [_size * (2*num_pts)][(2*num_pts) * _size]
+
+
+
+
+//begin routine or looping
+bool ransacRep = true;
+//float coeffMat[reader->locationMap.size()][_size];
+float ** coeffMat;
+coeffMat = new float*[2 * reader->locationMap.size()];
+for(i = 0; i < reader->locationMap.size() * 2; i++)
+	coeffMat[i] = new float[_size];
+
+bool removedOnce = false;
+
+int maybeInliersRecordCounter = num_pts;
+int globalIterationCounter = 0;
+
+while(ransacRep == true && globalIterationCounter < maxIterations && (reader->locationMap.size() - num_pts) > 8)
+{
+alsoInliers.clear();
+alsoInliers.reserve(reader->locationMap.size());
+nonInliers.clear();
+nonInliers.reserve(reader->locationMap.size());
+
+//float coeffMat[num_pts *2][_size];
+std::cout<<" iterate "<<num_pts<<std::endl;
+for(int jj = 0; jj < num_pts; jj++)
+ {
+	dataPoints d1(maybeInliers[jj]);
+
+	coeffMat[2 * jj][0] = 0;			//0 to _size
+	coeffMat[2 * jj][1] = 0;
+	coeffMat[2 * jj][2] = 0;
+	coeffMat[2 * jj][3] = -d1.firstWidth;
+	coeffMat[2 * jj][4] = -d1.firstHeight;
+	coeffMat[2 * jj][5] = -1;
+	coeffMat[2 * jj][6] =  d1.secondHeight * d1.firstWidth;
+	coeffMat[2 * jj][7] =  d1.secondHeight * d1.firstHeight;
+	coeffMat[2 * jj][8] =  d1.secondHeight;
+
+
+	coeffMat[2 * jj + 1][0] = d1.firstWidth;
+	coeffMat[2 * jj + 1][1] = d1.firstHeight;
+	coeffMat[2 * jj + 1][2] = 1;
+	coeffMat[2 * jj + 1][3] = 0;
+	coeffMat[2 * jj + 1][4] = 0;
+	coeffMat[2 * jj + 1][5] = 0;
+	coeffMat[2 * jj + 1][6] = -d1.secondWidth * d1.firstWidth;
+	coeffMat[2 * jj + 1][7] = -d1.secondWidth * d1.firstHeight;
+	coeffMat[2 * jj + 1][8] = -d1.secondWidth * 1;
+ }
+
+sidel(homographyMat, coeffMat, 2 * num_pts);
+
+obj.z = 1.0;
+
+inliersCount = 0;
+maxIterationCounter++;
+assert(isInlierSet.count() == num_pts);
+for(j = 0; j < reader->locationMap.size(); j++)
+ {
+	if(isInlierSet[j] == 0)						//if co-ordinate hasn't already been considered an inlier, do
+	{
+	dataPoints d2(j);
+	obj.x = d2.firstWidth;	obj.y = d2.firstHeight;
+
+	img = homographyMat * obj;
+
+		diff = fabs(d2.secondWidth - img.x/img.z) + fabs(d2.secondHeight - img.y/img.z);	
+		if(diff < (0.5 - (maxIterations * 0.05))) 
+		 {
+		  inliersCount++;
+		  alsoInliers.push_back(j);
+		 }
+		else
+		 nonInliers.push_back(j);
+		
+	}	
+ }
+assert(alsoInliers.size() + nonInliers.size() == reader->locationMap.size() - isInlierSet.count());
+//this model is worthy //push these alsoInliers into maybeInliers
+if(inliersCount >= (reader->locationMap.size() - num_pts) /3)	
+ {
+	for(i = 0; i < alsoInliers.size(); i++)
+	{
+ 	 maybeInliers.push_back(alsoInliers[i]);
+	 isInlierSet[alsoInliers[i]] = 1;
+	}
+
+
+	num_pts += alsoInliers.size();
+
+	totalInliersCount[maxIterationCounter] = alsoInliers.size();		//keeps record of possible Inliers
+
+	if(maybeInliersRecordCounter < num_pts)
+	{
+	 maybeInliersRecordCounter = num_pts;
+	 if(removedOnce == false)
+	 {
+	 	for(i = 0; i < alsoInliers.size(); i++)
+	 		maybeInliersRecord.push_back(alsoInliers[i]);	
+	 }
+
+	 else if(removedOnce == true)
+	 {
+		removedOnce = false;
+		maybeInliersRecord.clear();
+		for(int i = 0; i < maybeInliers.size(); i++)
+			maybeInliersRecord[i] = maybeInliers[i];
+	 }
+	}
+
+	for(k = 0; k < maybeInliers.size(); k++)
+	std::cout<<"   "<<maybeInliers[k];
+	std::cout<<std::endl;
+ }
+
+//this model wasnot worthy and the points are not inliers, remove specific number from vector: maybeInliers
+//need the number of inliers previously added, which is totalIterationCounter[maxIterationCounter -1]
+//and remove
+else if(inliersCount != 0)	//less but not equal to zero
+ {
+
+	removedOnce = true;
+	sumMat = 0.0;
+	for(i = 0; i < maxIterationCounter -1; i++)
+	sumMat += totalInliersCount[i];
+
+	for(i = sumMat; i < num_pts; i++)
+	 isInlierSet[maybeInliers[i]] = 0;
+
+	maybeInliers.erase(maybeInliers.begin() + sumMat, maybeInliers.begin() + num_pts);
+
+	interval = nonInliers.size();
+	srand(time(NULL));
+	num_pts = sumMat;
+
+	std::cout<<std::endl;
+	for(k = 0; k < maybeInliers.size(); k++)
+	std::cout<<"   "<<maybeInliers[k];
+	std::cout<<std::endl;
+
+	j = rand() % (interval/2);
+	for(k = 0; k < 4; k++)
+	{
+
+		maybeInliers.push_back(nonInliers[j + k]);
+		isInlierSet[nonInliers[j + k]] = 1;
+	}
+
+	std::cout<<std::endl;
+	for(k = 0; k < maybeInliers.size(); k++)
+	std::cout<<"   "<<maybeInliers[k];
+	std::cout<<std::endl;
+
+	num_pts += 4;
+	totalInliersCount[maxIterationCounter-1] = 4;
+	maxIterationCounter--;
+
+ }
+else if(inliersCount == 0) ransacRep = false;
+  globalIterationCounter++;
+}
+
+delete[] coeffMat;
+std::cout<<" maybe Size "<<maybeInliersRecord.size()<<std::endl;
+}
+
+std::vector<unsigned int>g_lineIndex;
+void connectingDots()
+{
+ vector3d pos;
+ g_points.clear();
+ g_points.reserve(maybeInliersRecord.size() * 2);
+ g_lineIndex.clear();
+ g_lineIndex.reserve(maybeInliersRecord.size() * 2);
+
+ int k = 0;
+ for(int i = 0; i < maybeInliersRecord.size(); i++)
+ {
+	dataPoints d1(maybeInliersRecord[i]);
+	pos.change(d1.firstWidth - 1, 2 * d1.firstHeight - 1, -1.0);
+	g_points.push_back(pos);
+	pos.change(d1.secondWidth, 2 * d1.secondHeight -1, -1.0);
+	g_points.push_back(pos);
+	g_lineIndex.push_back(k);
+	g_lineIndex.push_back(k+1);
+	k += 2;
+ }
+
+ connectDots = new lines(&g_points, &g_lineIndex);
+}
+
+void checkDots()
+{
+ vector3d pos;
+ g_points.clear();
+ g_points.reserve(4);
+ g_lineIndex.clear();
+ g_lineIndex.reserve(4);
+	
+ pos.change(-0.8, -0.8, -1.0);
+ g_points.push_back(pos);
+ pos.change(0.8, 0.8, -1.0);
+ g_points.push_back(pos);
+ g_lineIndex.push_back(0);
+ g_lineIndex.push_back(1);
+
+ pos.change(-0.8, 0.8, -1.0);
+ g_points.push_back(pos);
+ pos.change(0.8, -0.8, -1.0);
+ g_points.push_back(pos);
+ g_lineIndex.push_back(2);
+ g_lineIndex.push_back(3);
+
+ connectDots = new lines(&g_points, &g_lineIndex);
+}
+
+
+
+float m_epipole[3];
+float m_epipole2[3];
+Matrix3f yamMat;
+void normalizeFundamentalMatrix(Matrix3f fund, Matrix3f& retFund)
+{
+ Matrix3f orthoMat;
+ Matrix3f orthoMatU;
+ Matrix3f diagMat;
+ Matrix3f dummyFund;
+//find determinant of matrix
+ float det = fund.Determinant();
+
+if(det != 0.0)
+ {
+ 	powerSVD(fund, orthoMatU, diagMat, orthoMat);
+
+  	diagMat.m[2][2] = 0.0;
+ 	//transpose matU
+ 	retFund = orthoMatU.ReturnTranspose() * diagMat * orthoMat;
+ }
+
+else if(det == 0.0)
+ {
+	std::cout<<std::endl<<" determinant is 0.0, set to IDENTITY"<<std::endl;
+	retFund= fund;
+ }
+}
+
+void sidel(Matrix3f& homographyMat, float** coeffMat, int num_pts)	//num_pts defines number of rows
+{
+int i, j, k, l;
+float sum, sumMat;
+int _size = 9;
+float transform[_size];
+float dummyTransform[_size];
+float mat[_size][_size];				
+float matL[_size][_size], matD[_size][_size], matLDU[_size][_size];
+int soln[_size];
+int soln_row[_size];
+float max_val;
+int loc;
+float swapVar;
+std::map<int, int>coord_map;
+int threshold = 0;
+bool repeat = true;
+
+
+for(i = 0; i < _size; i++)
+ {
+	for(j = 0; j < _size; j++)
+	{
+		sumMat = 0.0;
+		for(int k = 0; k < num_pts; k++)
+		sumMat += coeffMat[k][i] * coeffMat[k][j];
+
+		mat[i][j] = sumMat;			//symmetric matrix formed
+	}
+ }	
+
+
+
+for(i = 0; i < _size; i++)
+	 soln[i] = i;
+
+//perform full pivoting
+
+for(i = 0; i < _size; i++)
+{
+	max_val = fabs(mat[i][i]);
+	coord_map[i] = i * _size + i;
+	for(k = i; k < _size; k++)
+	{
+	 for(l = i; l < _size; l++)
+		if(fabs(mat[k][l]) > max_val){ max_val = mat[k][l]; coord_map[i] = k * _size + l; }
+	}
+
+  loc = coord_map[i];			//k,l <- i,j
+  k = loc/_size;
+  l = loc%_size;
+  if(i != l)				//different column same row, swap columns
+  {
+	for(int row = 0; row < _size; row++)
+	{
+		swapVar = mat[row][i];
+		mat[row][i] = mat[row][l];
+		mat[row][l] = swapVar;	
+	}
+  swapVar = soln[i];
+  soln[i] = soln[l];
+  soln[l] = swapVar;
+  }  
+
+  if(i != k)				//different row same columns, swap rows
+  {
+	for(int col = 0; col < _size; col++)
+	{
+		swapVar = mat[i][col];
+		mat[i][col] = mat[k][col];
+		mat[k][col] = swapVar;	
+	}
+  } 
+}
+
+for(i = 0; i < _size; i++)
+  soln_row[soln[i]] = i;
+
+
+//pivot finished, start sidel
+
+for(i = 0; i < _size; i++)
+ {
+	for(int j = 0; j < _size; j++)
+	{
+		if(i < j || i > j) { matL[i][j] = -mat[i][j]; matD[i][j] = 0; }
+		else if(i == j){ matD[i][j] = (1/mat[i][j]); matL[i][j] = 0; }
+
+	}
+ }
+
+//do (inv D)*(L + U) i.e. multiplication matD * matL
+for(i = 0; i < _size; i++)
+ {
+	for(int j = 0; j < _size; j++)
+	{
+	 	matLDU[i][j] = 0.0;
+		for(int k = 0; k < _size; k++)
+		 matLDU[i][j] += matD[i][k] * matL[k][j];
+		
+	}
+ }
+
+//start iterative process
+
+for(i = 0; i < _size; i++){
+	transform[i] = 0.5;			//initialize data to vector
+	dummyTransform[i] = 0.5;}
+
+sum = 0.0;
+float diff;
+int maxRepeat = 1000/ num_pts;
+
+while(repeat)
+ {
+ 	for(i = 0; i < _size; i++)
+	{
+	sum = 0.0;
+	 for(int j = 0; j < _size; j++)
+	  sum += matLDU[i][j] * transform[j];
+	 transform[i] = sum;
+	}
+ threshold++;
+	//std::cout<<" threshold "<<threshold<<std::endl;
+	repeat = false;		//assume that u won`t have to repeat next
+	//make comparision between current and previous vectors
+	for(int i = 0; i < _size; i++)
+	{
+	diff = fabs(transform[i] - dummyTransform[i]);
+	if(diff > 0.0005)	//still not close enough, repeat again by exiting loop
+		{
+			i = _size;
+			repeat = true;
+		}
+	}
+	if(repeat)	//if you have to repeat, assign current matrix
+	{
+		for(int i = 0; i < _size; i++)
+{
+		dummyTransform[i] = transform[i];
+		std::cout<<" transform "<<i<<" =  "<<transform[i]<<std::endl; 
+		}
+	}
+
+ if(threshold > maxRepeat) { repeat = false;}	//exceeded max number of iterations, exit forcefully
+ }
+
+sum = 0.0;
+for(i = 0; i < _size; i++)
+ sum += transform[i] * transform[i];
+ sum = sqrt(sum); 
+
+for(i = 0; i < _size; i++)
+ {
+ 	k = i / _size;
+ 	l = i % _size;
+ 	homographyMat.m[k][l] = transform[soln_row[i]]/sum;
+ }
+
+}
+
+
+
+
+float powerSVD(Matrix3f fund, Matrix3f& orthoMatU, Matrix3f& diagMat, Matrix3f& orthoMat)
+{
+int _size = 3;
+ Matrix3f symmetricFund;
+
+symmetricFund = fund.ReturnSymmetric();	//returned AtA
+
+ //if determinant is 0, look no further, else 
+ int matSize = 0;
+ float dummyMaxEigenVec[3] = {0.0};
+ int counter;
+ bool powerRepeat = true;
+ float squareSum = 0.0;
+ float sum = 0.0;
+ int totalCounter = 0;
+
+ while(matSize != 3)
+ {
+ //initial approximation to eigenVector
+	orthoMat.m[matSize][0] = 1.0;
+	orthoMatU.m[matSize][0] = 1.0;
+
+ for(int i = 1; i < 3; i++)
+ {
+	orthoMat.m[matSize][i] = 0.0;
+	orthoMatU.m[matSize][i] = 0.0;
+ }
+
+ //dummy eigenVecs for value comparision during iteration
+ powerRepeat = true;
+ squareSum = 0.0;
+ sum = 0.0;
+ totalCounter = 0;
+
+  while(powerRepeat)
+	{
+	 //std::cout<<" repeat "<<std::endl;
+	 //save maxEigenVec to dummy
+	 for(int i = 0; i < _size; i++)
+		dummyMaxEigenVec[i] = orthoMat.m[matSize][i];
+
+	 //do matrix multiplication
+	 for(int i = 0; i < _size; i++)
+		orthoMat.m[matSize][i] = dummyMaxEigenVec[0] * symmetricFund.m[i][0] + dummyMaxEigenVec[1] * symmetricFund.m[i][1] + dummyMaxEigenVec[2] * symmetricFund.m[i][2];
+
+	 //find maximum value in eigenVec and make it 1
+	 diagMat.m[matSize][matSize] = fabs(orthoMat.m[matSize][0]);
+	 for(int i = 1; i < _size; i++)
+	 {
+		if(fabs(orthoMat.m[matSize][i]) > diagMat.m[matSize][matSize]) diagMat.m[matSize][matSize] = fabs(orthoMat.m[matSize][i]);
+	 }
+
+	 for(int i = 0; i < _size; i++)
+		orthoMat.m[matSize][i] /= diagMat.m[matSize][matSize];
+
+	 //comparision for repitition of iteration
+	 counter = 0;
+	 for(int i = 0; i < _size; i++)
+	 {
+		if(fabs(dummyMaxEigenVec[i] - orthoMat.m[matSize][i]) < 0.0005) counter++;
+	 }	
+	
+	totalCounter++;
+	 if(counter == 3 || totalCounter > 50) powerRepeat = false;
+	
+	 if(!powerRepeat)
+		{
+
+		 squareSum = orthoMat.m[matSize][0] * orthoMat.m[matSize][0] + orthoMat.m[matSize][1] * orthoMat.m[matSize][1]
+			 + orthoMat.m[matSize][2] * orthoMat.m[matSize][2];
+		 squareSum = sqrt(squareSum); 
+		 orthoMat.m[matSize][0] /= squareSum;
+		 orthoMat.m[matSize][1] /= squareSum;
+		 orthoMat.m[matSize][2] /= squareSum; //v[i] = x[i] / |x[i]|
+		
+		sum = 0.0;
+		 for(int i = 0; i < _size; i++)
+		 {
+			squareSum = fund.m[i][0] * orthoMat.m[matSize][0] + fund.m[i][1] * orthoMat.m[matSize][1] 
+					+ fund.m[i][2] * orthoMat.m[matSize][2];
+			sum += squareSum * squareSum;
+			orthoMatU.m[matSize][i] = squareSum;	
+		 }		
+		 sum = sqrt(sum);
+		diagMat.m[matSize][matSize] = sum;
+
+		for(int i = 0; i < _size; i++)
+		 orthoMatU.m[matSize][i] /= sum;
+
+		if(totalCounter > 50){assert(0);}
+
+		}
+
+	}
+
+ for(int i = 0; i < _size; i++)
+ {
+	for(int j = 0; j < _size; j++)
+	 fund.m[i][j] -= diagMat.m[matSize][matSize] * orthoMatU.m[matSize][i] * orthoMat.m[matSize][j];
+ }
+ symmetricFund = fund.ReturnSymmetric();
+ matSize++;
+ }
+}
+
+
+
+
+void normalization(std::vector<int> maybeInliersRecord, Matrix3f& matTranScale, Matrix3f& matTranScaleDash)
+{
+ float sumX = 0.0, sumY = 0.0, sumXdash = 0.0, sumYdash = 0.0;
+ float sumsq = 0.0, sumsqdash = 0.0;
+
+ //find offset till mean zero translation or centroid = 0;
+ int num_pts = maybeInliersRecord.size();;
+ for(int i = 0; i < num_pts; i++)
+ {
+	dataPoints d1(maybeInliersRecord[i]);
+
+	sumX += d1.firstWidth;		sumY += d1.firstHeight;
+	sumXdash += d1.secondWidth;	sumYdash += d1.secondHeight;
+ }
+ sumX /= num_pts;	sumY /= num_pts;
+ sumXdash /= num_pts;	sumYdash /= num_pts;
+
+ vector3d meanFirst = vector3d(sumX, sumY, 1.0);
+ vector3d meanSecond = vector3d(sumXdash, sumYdash, 1.0);
+ //translate points
+ for(int i = 0; i < num_pts; i++)
+ {
+	dataPoints d1(maybeInliersRecord[i]);
+
+	sumsq += meanFirst.distancePoints(vector3d(d1.firstWidth, d1.firstHeight, 1.0));
+	sumsqdash += meanSecond.distancePoints(vector3d(d1.secondWidth, d1.secondHeight, 1.0));
+
+ }
+ sumsq /= num_pts;		sumsqdash /= num_pts;
+ sumsq = 1.414214/sumsq;	sumsqdash = 1.414214/sumsqdash;
+ sumsq = 1.0;	sumsqdash = 1.0;
+ matTranScale.m[0][0] = sumsq;	matTranScale.m[0][1] = 0.0;	matTranScale.m[0][2] = -sumsq * sumX;
+ matTranScale.m[1][0] = 0.0;	matTranScale.m[1][1] = sumsq;	matTranScale.m[1][2] = -sumsq * sumY;
+ matTranScale.m[2][0] = 0.0;	matTranScale.m[2][1] = 0.0;	matTranScale.m[2][2] = 1.0;
+
+ matTranScaleDash.m[0][0] = sumsqdash;	matTranScaleDash.m[0][1] = 0.0;		matTranScaleDash.m[0][2] = -sumsqdash * sumXdash;
+ matTranScaleDash.m[1][0] = 0.0;	matTranScaleDash.m[1][1] = sumsqdash;	matTranScaleDash.m[1][2] = -sumsqdash * sumYdash;
+ matTranScaleDash.m[2][0] = 0.0;	matTranScaleDash.m[2][1] = 0.0;		matTranScaleDash.m[2][2] = 1.0;
+
+vector3d fire, water; 
+float f = 0.0, w = 0.0;
+ for(int i = 0; i < num_pts; i++)
+ {
+	dataPoints d1(maybeInliersRecord[i]);
+	vector3d first = vector3d(d1.firstWidth, d1.firstHeight, 1.0); 
+	vector3d second = vector3d(d1.secondWidth, d1.secondHeight, 1.0);
+	first = matTranScale * first;
+	second = matTranScaleDash * second;
+	first.change(first.x / first.z, first.y/first.z, 1.0);
+	second.change(second.x / second.z, second.y/second.z, 1.0);
+	fire += first;
+	f += first.length();
+	water += second;
+	w += second.length();
+ }
+ fire /= num_pts;
+ water /= num_pts;
+ f /= num_pts;
+ w /= num_pts;
+
+}
+
+
+void fundamentalMatrixEstimate()
+{
+ int num_pts = maybeInliersRecord.size();
+ //float coeffMat[num_pts][9];
+ float **coeffMat;
+ Matrix3f homographyMat;
+ Matrix3f normHomographyMat;
+ coeffMat = new float*[num_pts];	//changed here form reader->locationMap.size()
+ for(int i = 0; i < num_pts; i++)
+	coeffMat[i] = new float[9];
+ vector3d transformX, transformXdash;
+ vector3d transX, transXdash;
+ Matrix3f matTranScale;
+ Matrix3f matTranScaleDash;
+ normalization(maybeInliersRecord, matTranScale, matTranScaleDash);
+ for(int i = 0; i < num_pts; i++)
+ {
+	dataPoints d1(maybeInliersRecord[i], transformX, transformXdash);
+
+	 transX = matTranScale * transformX;
+	 transXdash = matTranScaleDash * transformXdash;
+	 //transX.Display("transX");
+	 //transXdash.Display("transXdash");
+
+	
+//(x`x, x`y, x`, y`x, y`y, y`, x, y, 1) f = 0.
+	coeffMat[i][0] = transXdash.x * transX.x;
+	coeffMat[i][1] = transXdash.x * transX.y;
+	coeffMat[i][2] = transXdash.x;
+	coeffMat[i][3] = transXdash.y * transX.x;
+	coeffMat[i][4] = transXdash.y * transX.y;
+	coeffMat[i][5] = transXdash.y;
+	coeffMat[i][6] = transX.x;
+	coeffMat[i][7] = transX.y;
+	coeffMat[i][8] = 1.0;
+	std::cout<<std::endl;
+	for(int j = 0; j < 9; j++)
+ 		std::cout<<"  "<<coeffMat[i][j];
+ }
+ sidel(homographyMat, coeffMat, num_pts);
+ normalizeFundamentalMatrix(homographyMat, normHomographyMat);
+ //denormalization
+ normHomographyMat = matTranScaleDash.ReturnTranspose() * normHomographyMat * matTranScale;
+ Matrix3f orthoMatU, diagMat, orthoMat;
+
+ powerSVD(normHomographyMat, orthoMatU, diagMat, orthoMat);
+
+ m_epipole[0] = orthoMat.m[2][0];
+ m_epipole[1] = orthoMat.m[2][1];
+ m_epipole[2] = orthoMat.m[2][2];
+
+ m_epipole2[0] = orthoMatU.m[2][0];
+ m_epipole2[1] = orthoMatU.m[2][1];
+ m_epipole2[2] = orthoMatU.m[2][2];
+
+Matrix3f dummyMatrix;
+ dummyMatrix.m[0][0] = 0.0;			dummyMatrix.m[0][1] = -m_epipole2[2];	dummyMatrix.m[0][2] = m_epipole2[1];
+ dummyMatrix.m[1][0] = m_epipole2[2];		dummyMatrix.m[1][1] = 0.0;		dummyMatrix.m[1][2] = -m_epipole2[0];
+ dummyMatrix.m[2][0] = -m_epipole2[1];		dummyMatrix.m[2][1] = m_epipole2[0];	dummyMatrix.m[2][2] = 0.0;
+  
+ yamMat = dummyMatrix * normHomographyMat;
+ yamMat.Display("yam");
+delete[] coeffMat;
+}
+
+void toInfinity(float *m_center, float *epi_2, Matrix3f& matOut)
+{
+ epi_2[0] /= epi_2[2];
+ epi_2[1] /= epi_2[2];
+ epi_2[2] = 1.0;
+ float tan_thita = (epi_2[1] - m_center[1]) / (epi_2[0] - m_center[0]);
+ Matrix3f transMat;
+ Matrix3f rotMat;
+ Matrix3f infMat;
+ int _size = 3;
+ float dummyVec[3];
+ float f = (epi_2[0] - m_center[0]) + tan_thita * (epi_2[1] - m_center[1]);
+//transMat takes m_center[3] to  {0, 0, 1}, other positions likely
+ transMat.m[0][0] = 1;		transMat.m[0][1] = 0;		transMat.m[0][2] = -m_center[0];
+ transMat.m[1][0] = 0;		transMat.m[1][1] = 1;		transMat.m[1][2] = -m_center[1];
+ transMat.m[2][0] = 0;		transMat.m[2][1] = 0;		transMat.m[2][2] = 1;
+
+vector3d(transMat * vector3d(epi_2)).Display("mid");
+//rotates translated epipolar point such that it lies on x-axis now
+ rotMat.m[0][0] = 1;		rotMat.m[0][1] = tan_thita;	rotMat.m[0][2] = 0;
+ rotMat.m[1][0] = -tan_thita;	rotMat.m[1][1] = 1;		rotMat.m[1][2] = 0;
+ rotMat.m[2][0] = 0;		rotMat.m[2][1] = 0;		rotMat.m[2][2] = 1;
+
+vector3d(rotMat * transMat * vector3d(epi_2)).Display("mid");
+//takes epipolar point to infinity//vec rt = RTx
+ infMat.m[0][0] = 1/f;		infMat.m[0][1] = 0;		infMat.m[0][2] = 0;
+ infMat.m[1][0] = 0;		infMat.m[1][1] = 1/f;		infMat.m[1][2] = 0;
+ infMat.m[2][0] = -1/f;		infMat.m[2][1] = 0;		infMat.m[2][2] = 1;
+
+ matOut = infMat * rotMat * transMat;
+vector3d(matOut * vector3d(epi_2)).Display("mid");
+ 
+}
+
+void batchVecMatMultiply(std::vector<int>inputVec, Matrix3f homoDash, float **yaxDash, bool isFirst)
+{
+ assert(inputVec.size() == maybeInliersRecord.size());
+ for(int i = 0; i < inputVec.size(); i++)
+ {
+	if(isFirst == false)
+	{
+		dataPoints d1(inputVec[i], isFirst);
+		for(int j = 0; j < 3; j++)
+		 yaxDash[i][j] = homoDash.m[j][0] * d1.secondWidth + homoDash.m[j][1] * d1.secondHeight + homoDash.m[j][2] * 1.0; 
+	}
+	
+	else if(isFirst == true)
+	{
+		dataPoints d1(inputVec[i]);
+		for(int j = 0; j < 3; j++)
+		 yaxDash[i][j] = homoDash.m[j][0] * d1.firstWidth + homoDash.m[j][1] * d1.firstHeight + homoDash.m[j][2] * 1.0; 
+	}
+	
+ }
+
+}
+
+	Matrix3f homoDash;
+	Matrix3f homoMat;
+void rectification()
+{
+	int num_pts = maybeInliersRecord.size();
+	rectPoints da(maybeInliersRecord[0]);
+	float minVal = da.val;
+	int minID = 0;
+	for(int i = 1; i < num_pts; i++)
+	{
+		rectPoints d1(maybeInliersRecord[i]);
+		if(d1.val < minVal)
+		{
+			minVal = d1.val;
+			minID = i;
+		}
+	}
+	dataPoints datum(maybeInliersRecord[minID]);
+
+	for(int i = 0; i < 3; i++)
+	std::cout<<"  "<<m_epipole[i];
+	std::cout<<std::endl;
+	for(int i = 0; i < 3; i++)
+	std::cout<<"  "<<m_epipole2[i];
+
+	Matrix3f homoKnot;
+	float mid[3] = {datum.firstWidth, datum.firstHeight, 1.0};
+	toInfinity(mid, m_epipole2, homoDash);
+	homoKnot = homoDash * yamMat;
+
+	float** yaxCapDash;
+	yaxCapDash = new float*[maybeInliersRecord.size()];
+	for(int i = 0; i < maybeInliersRecord.size(); i++)
+	 yaxCapDash[i] = new float[3];
+
+	batchVecMatMultiply(maybeInliersRecord, homoDash, yaxCapDash, false);
+
+	float** yaxCap;
+	yaxCap = new float*[maybeInliersRecord.size()];
+	for(int i = 0; i < maybeInliersRecord.size(); i++)
+	 yaxCap[i] = new float[3];
+
+	batchVecMatMultiply(maybeInliersRecord, homoKnot, yaxCap, true);
+	float alphabet[3];
+	parameterMinimization(yaxCap, yaxCapDash, maybeInliersRecord.size(), alphabet);
+
+	Matrix3f homoMatA;
+	homoMatA.m[0][0] = alphabet[0];	homoMatA.m[0][1] = alphabet[1];	homoMatA.m[0][2] = alphabet[2];
+	homoMatA.m[1][1] = 1.0;		homoMatA.m[2][2] = 1.0;	
+
+	homoMat = homoMatA * homoKnot;
+	homoMat.Display("homoMat");
+	homoDash.Display("hDASh");
+
+	delete[] yaxCap;
+	delete[] yaxCapDash;	
+
+}
+
+void parameterMinimization(float **yax, float **yaxDash, int vecSize, float* outVec)
+{
+ float sumX2 = 0.0, sumXY = 0.0, sumX = 0.0, sumXdX = 0.0, sumY2 =0.0, sumY = 0.0, sumXdY = 0.0, sumXd = 0.0;
+ float _x, _y, _xd;
+ for(int i = 0; i < vecSize; i++)
+ {
+	_x = yax[i][0];
+	_y = yax[i][1];
+	_xd= yaxDash[i][0];
+
+	sumX2 += _x * _x;
+	sumXY += _x * _y;
+	sumX  += _x;
+	sumXdX+= _xd * _x;
+	sumY2 += _y * _y;
+	sumY  += _y;
+	sumXdY+= _xd * _y;
+	sumXd += _xd;
+ }
+
+ float augMatrix[3][4];
+ Matrix3f augmentMatrix;
+ vector3d coeffVec;
+ augmentMatrix.m[0][0] = sumX2;	augmentMatrix.m[0][1] = sumXY;	augmentMatrix.m[0][2] = sumX;			coeffVec.x = sumXdX;
+ augmentMatrix.m[1][0] = sumXY;	augmentMatrix.m[1][1] = sumY2;	augmentMatrix.m[1][2] = sumY;			coeffVec.y = sumXdY;
+ augmentMatrix.m[2][0] = sumX;	augmentMatrix.m[2][1] = sumY;	augmentMatrix.m[2][2] = vecSize;		coeffVec.z = sumXd;
+
+ //gaussElimination(augMatrix, outVec);
+ std::cout<<"here "<<std::endl;
+ Matrix3f orthoMatU, orthoMatD, orthoMatV;
+ powerSVD(augmentMatrix, orthoMatU, orthoMatD, orthoMatV);
+ orthoMatD.Display("diagMat");
+ for(int i = 0; i < 3; i++)
+ {
+ 	if(orthoMatD.m[i][i] < 0.0005) orthoMatD.m[i][i] = 0.0;
+ 	else orthoMatD.m[i][i] = 1/orthoMatD.m[i][i];
+ }
+ vector3d cVec = orthoMatV.ReturnTranspose() * orthoMatD * orthoMatU * coeffVec;
+ outVec[0] = cVec.x, outVec[1] = cVec.y, outVec[2] = cVec.z; 
+ 
+}
+
+
+void gaussElimination(float mat[][4], float* outVec)
+{
+/*
+std::cout<<std::endl<<"  aug  "<<std::endl;
+for(int i = 0; i < 3; i++)
+{
+ std::cout<<std::endl;
+ for(int j = 0; j < 4; j++)
+		std::cout<<"  "<<mat[i][j]<<"  ";
+}
+
+
+
+ //partial pivoting
+ float checkElement;
+ int changeID[2];
+ float dummyRow[4];
+ 
+ for(int i = 0; i < 3; i++)
+ {
+	checkElement = fabs(mat[i][i]);
+	changeID[0] = i;
+	changeID[1] = i;
+	for(int j = i+1; j < 3; j++)
+	{
+		if(checkElement < fabs(mat[j][i])) 
+		{
+		 checkElement = fabs(mat[j][i]);
+		 changeID[1] = j;
+		}	
+	}
+	
+	if(changeID[0] != changeID[1])		//some element had higher value interchange mat
+	{
+		for(int k = 0; k < 4; k++)
+		{
+			dummyRow[k] = mat[changeID[0]][k];
+			mat[changeID[0]][k] = mat[changeID[1]][k];
+			mat[changeID[1]][k] = dummyRow[k];
+		}
+	}
+ }
+//pivoting finished, start gauss elimination
+std::cout<<std::endl<<"  aug  "<<std::endl;
+for(int i = 0; i < 3; i++)
+{
+ std::cout<<std::endl;
+ for(int j = 0; j < 4; j++)
+		std::cout<<"  "<<mat[i][j]<<"  ";
+}
+
+
+    //elementary row operation
+
+
+    for(int j = 0; j < 3; j++)
+    {
+        for(int i = j+1; i < 3; i++)
+        {
+            checkElement = mat[i][j] / mat[j][j];
+            for(int k = 0; k <= 3; k++)
+                mat[i][k] = mat[i][k] - checkElement * mat[j][k];
+        }
+    }
+
+
+    printf("\n after calculation");
+     for(int i = 0; i < 3; i++)
+    {
+        printf("\n");
+        for(int j = 0; j <= 3; j++)
+        {
+            printf("%.3f", mat[i][j]);
+            printf("\t");
+        }
+    }
+    //back substitution
+
+    outVec[2] = mat[2][3] / mat[2][2];
+	std::cout<<" outvec2  "<<outVec[2]<<"  and  "<<mat[2][2]<<std::endl;
+    for(int i = 1; i >= 0; i--)
+    {
+	checkElement = 0.0;
+        for(int k = i+1; k <= 2; k++)
+            checkElement += outVec[k] * mat[i][k];
+        outVec[i] = mat[i][3] - checkElement;
+        outVec[i] /= mat[i][i];
+    }
+
+Matrix3f matL, matD, matLDU;
+for(int i = 0; i < 3; i++)
+ {
+	for(int j = 0; j < 3; j++)
+	{
+		if(i < j || i > j) { matL.m[i][j] = -mat[i][j]; matD.m[i][j] = 0.0; }
+		else if(i == j){ matD.m[i][j] = (1/mat[i][j]); matL.m[i][j] = 0.0; }
+
+	}
+ }
+
+//do (inv D)*(L + U) i.e. multiplication matD * matL
+matLDU = matD * matL;
+vector3d coeffVec = matD * vector3d(mat[0][3], mat[1][3], mat[2][3]);
+
+
+//start iterative process
+
+vector3d transform(1.0, 0.0, 0.0);
+bool repeat = true;
+int threshold = 0;
+while(repeat)
+ {
+	std::cout<<"  t "<<threshold<<std::endl;
+	transform.Display();
+	transform = (matLDU * transform) + coeffVec;
+	transform.normalize();
+	transform.Display();
+	//transform += coeffVec;
+	//transform.Display();
+ threshold++;
+ if(threshold > 25) repeat = false;
+ }
+ 
+vector3d check = Matrix3f(mat[0][0], mat[0][1], mat[0][2], mat[1][0], mat[1][1], mat[1][2], mat[2][0], mat[2][1], mat[2][2]) * transform;
+check.Display("chk"); 
+
+outVec[0] = transform.x;
+outVec[1] = transform.y;
+outVec[2] = transform.z;
+*/
+}
+
+
+
+void displayInit()
+{
+ for(int i =0; i < 2; i++)
+ {
+	glClearColor(0.0, 0.0, 0.0, 1);
+	pipeline.matrixMode(MODEL_MATRIX);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO);			//attached texture textureMap
+		shades->useShader();
+		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+		if(i == 0)
+		{
+			pipeline.updateMatrices(shades->getProgramId());
+			scene->draw(shades->getProgramId());
+		}
+		else if(i == 1)
+		{
+			pipeline.updateMatrices(shades->getProgramId());
+			scene2->draw(shades->getProgramId());
+		}
+		shades->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+	
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO2);
+	glClearColor(1.0, 0.0, 0.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	texturingShades->useShader();				//attached blurredImage, uses textureMap
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D,textureMap);
+		glUniform1i(glGetUniformLocation(texturingShades->getProgramId(),"textures"),0);
+		pipeline.updateMatrices(texturingShades->getProgramId());
+		quad->draw(texturingShades->getProgramId());
+	
+	texturingShades->delShader();
+
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO2_2);
+	glClearColor(1.0, 0.0, 0.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	texturingShades2->useShader();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D,preBlurredImage);
+		glUniform1i(glGetUniformLocation(texturingShades2->getProgramId(),"textures"),0);
+		pipeline.updateMatrices(texturingShades2->getProgramId());
+		quad->draw(texturingShades2->getProgramId());
+	texturingShades2->delShader();
+
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO3);			//attached cornerImage, uses blurredImage
+	glClearColor(0.0, 1.0, 0.0, 1.0);
+	pipeline.loadIdentity();
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	harrisShades->useShader();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, blurredImage);
+		glUniform1i(glGetUniformLocation(harrisShades->getProgramId(),"blurred_textures"),0.0);
+		pipeline.updateMatrices(harrisShades->getProgramId());
+		quad->draw(harrisShades->getProgramId());
+	harrisShades->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+ if(i == 0)
+	{
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO4);			//attached superImage, uses cornerImage
+	glClearColor(0.0, 0.0, 1.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	cornerShades->useShader();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, cornerImage);		
+		glUniform1i(glGetUniformLocation(cornerShades->getProgramId(),"jagged_textures"),0);
+		pipeline.updateMatrices(cornerShades->getProgramId());
+		quad->draw(cornerShades->getProgramId());
+	cornerShades->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	glClearColor(1, 0, 0.0, 1);
+	pipeline.matrixMode(MODEL_MATRIX);
+	glBindFramebuffer(GL_FRAMEBUFFER,grayFBO);		//attached grayTexture
+		grayShades->useShader();
+		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+		pipeline.updateMatrices(grayShades->getProgramId());
+		scene->draw(grayShades->getProgramId());
+		grayShades->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+	}
+ else if(i == 1)
+	{
+	glBindFramebuffer(GL_FRAMEBUFFER,FBO4_2);			//attached superImage_2, uses cornerImage
+	glClearColor(0.0, 0.0, 1.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	cornerShades_2->useShader();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, cornerImage);		
+		glUniform1i(glGetUniformLocation(cornerShades_2->getProgramId(),"jagged_textures"),0);
+		pipeline.updateMatrices(cornerShades_2->getProgramId());
+		quad->draw(cornerShades_2->getProgramId());
+	cornerShades_2->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+
+	glClearColor(0, 0, 0.0, 1);
+	pipeline.matrixMode(MODEL_MATRIX);
+	glBindFramebuffer(GL_FRAMEBUFFER,grayFBO_2);		//attached grayTexture
+		grayShades_2->useShader();
+		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+		pipeline.updateMatrices(shades->getProgramId());
+		scene2->draw(grayShades_2->getProgramId());
+		grayShades_2->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
+	}
+ }
+
+	glBindFramebuffer(GL_FRAMEBUFFER, orientFBO);		//attached emptyTexture
+ 	glClearColor(0.0, 0.0, 1.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	orientShades->useShader();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, superImage);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, grayTexture);	
+		glUniform1i(glGetUniformLocation(orientShades->getProgramId(),"super_textures"),0);
+		glUniform1i(glGetUniformLocation(orientShades->getProgramId(),"gray_textures"),1);
+		pipeline.updateMatrices(orientShades->getProgramId());
+		quad->draw(orientShades->getProgramId());
+	orientShades->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, orientFBO_2);		//attached emptyTexture
+ 	glClearColor(0.0, 0.0, 1.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	orientShades->useShader();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, superImage_2);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, grayTexture_2);	
+		glUniform1i(glGetUniformLocation(orientShades->getProgramId(),"super_textures"),0);
+		glUniform1i(glGetUniformLocation(orientShades->getProgramId(),"gray_textures"),1);
+		pipeline.updateMatrices(orientShades->getProgramId());
+		quad->draw(orientShades->getProgramId());
+	orientShades->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, FBO5);		//attached emptyTexture
+ 	glClearColor(0.0, 0.0, 1.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	emptyShades->useShader();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, orientTexture);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, grayTexture);	
+		glUniform1i(glGetUniformLocation(emptyShades->getProgramId(),"orient_textures"),0);
+		glUniform1i(glGetUniformLocation(emptyShades->getProgramId(),"gray_textures"),1);
+		pipeline.updateMatrices(emptyShades->getProgramId());
+		quad->draw(emptyShades->getProgramId());
+	emptyShades->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, FBO5_2);		//attached emptyTexture
+ 	glClearColor(0.0, 0.0, 1.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	emptyShades->useShader();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, orientTexture_2);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, grayTexture_2);		
+		glUniform1i(glGetUniformLocation(emptyShades->getProgramId(),"orient_textures"),0);
+		glUniform1i(glGetUniformLocation(emptyShades->getProgramId(),"gray_textures"),1);
+		pipeline.updateMatrices(emptyShades->getProgramId());
+		quad->draw(emptyShades->getProgramId());
+	emptyShades->delShader();
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+}
+
+void display()
+{
+
+	glClearColor(0.0, 0.0, 1.0, 1.0);
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	attachedShades->useShader();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, texOne);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, texOne);	
+		glUniform1i(glGetUniformLocation(attachedShades->getProgramId(),"empty_textures"),0);
+		glUniform1i(glGetUniformLocation(attachedShades->getProgramId(),"dot_textures"),1);
+		pipeline.updateMatrices(attachedShades->getProgramId());
+		quad->draw(attachedShades->getProgramId());
+	attachedShades->delShader();
+
+
+		glClearColor(1.0, 1.0, 1.0, 1.0);
+		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+/*
+		grayShades->useShader();
+			pipeline.updateMatrices(grayShades->getProgramId());
+			comboScene->draw(grayShades->getProgramId());
+		grayShades->delShader();
+
+		lineShades->useShader();
+			pipeline.updateMatrices(lineShades->getProgramId());
+			connectDots->linesDraw(lineShades->getProgramId());
+		lineShades->delShader();
+*/
+disparityShades->useShader();
+	glUniformMatrix3fv(glGetUniformLocation(disparityShades->getProgramId(),"homography"), 1, GL_FALSE,&homoMat.m[0][0]);
+	//glUniformMatrix3fv(glGetUniformLocation(disparityShades->getProgramId(),"homographyDash"), 1, GL_FALSE,&homoDash[0][0]);
+	pipeline.updateMatrices(disparityShades->getProgramId());
+	//scene->draw(disparityShades->getProgramId());
+disparityShades->delShader();
+
+disparityShades->useShader();
+	glUniformMatrix3fv(glGetUniformLocation(disparityShades->getProgramId(),"homography"), 1, GL_FALSE,&homoDash.m[0][0]);
+	pipeline.updateMatrices(disparityShades->getProgramId());
+	scene2->draw(disparityShades->getProgramId());
+disparityShades->delShader();
+
+}
+
+
+int main()
+{
+
+	SDL_Init(SDL_INIT_EVERYTHING);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+	gWindow = SDL_CreateWindow("SDL_COLLIDE", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
+	SDL_GLContext gContext = SDL_GL_CreateContext(gWindow);
+	glewExperimental = GL_TRUE;
+	glewInit();
+	SDL_GL_SetSwapInterval( 1 );
+	gScreenSurface = SDL_GetWindowSurface( gWindow );
+	bool running=true;
+	SDL_Event event;	
+	init();
+
+	while(running)
+	{
+		while(SDL_PollEvent(&event))
+		{
+			switch(event.type)
+			{
+				case SDL_QUIT:
+				running = false;
+				break;
+	
+				case SDL_KEYDOWN:
+				switch(event.key.keysym.sym)
+					{
+						case SDLK_ESCAPE:
+							running=false;
+							break;
+						
+					}
+	
+			}
+		}
+		display();
+		SDL_GL_SwapWindow(gWindow);
+	}
+
+	delete shades;
+	delete texturingShades;
+	delete texturingShades2;
+	delete harrisShades;
+	delete cornerShades;
+	delete cornerShades_2;
+	delete scene;
+	delete scene2;
+	delete comboScene;
+	delete emptyShades;
+	delete quad;
+	delete grayShades;
+	delete grayShades_2;
+	delete attachedShades;
+	delete orientShades;
+	delete connectDots;
+	delete lineShades;
+	delete disparityShades;
+	delete reader;
+
+	SDL_FreeSurface(gScreenSurface);
+	SDL_GL_DeleteContext(gContext);
+	SDL_DestroyWindow(gWindow);
+	SDL_Quit();
+	return 0;
+}

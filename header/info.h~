@@ -1,0 +1,147 @@
+#ifndef INFO_H
+#define INFO_H
+
+enum shaderInfo{
+
+DERIVATIVE_SHADER = 0,		//calculate contrast
+
+BLUR_SHADER1,			//gaussian blur
+BLUR_SHADER2,			
+
+HARRIS_CORNER_SHADER,		//corner detect
+
+SUPPRESS_SHADER,		//supress Image
+
+GRAYSCALE_SHADER,		//grayScale
+
+ORIENT_ASSIGN_SHADER,		//calculate orientation of pixels
+
+RING_BLUR_SHADER,		//calculate blur on six pts around keypoint
+
+RECTIFY_SHADER,			//dispair
+
+KERNEL_SHADER,
+
+SIMPLE_SHADER,
+
+TRUE_COLOR_SHADER,
+
+SCENE_SHADER,
+
+BIG_BLUR_SHADER1,
+BIG_BLUR_SHADER2,
+
+DESCRIPT_SHADER,
+
+SHADER_COUNT_TOTAL		//11
+};
+
+
+enum textureInfo
+{
+DERIVATIVE_TEX = 0,
+
+BLUR_TEX1,			
+BLUR_TEX2,
+			
+HARRIS_CORNER_TEX,		//corner detect
+
+SUPPRESS_TEX1,		//supress Image
+SUPPRESS_TEX2,
+
+GRAYSCALE_TEX1,		//grayScale
+GRAYSCALE_TEX2,
+
+ORIENT_ASSIGN_TEX,		//calculate orientation of pixels
+
+RING_BLUR_TEX1A,		//calculate blur on six pts around keypoint
+RING_BLUR_TEX1B,
+RING_BLUR_TEX1C,
+RING_BLUR_TEX1D,
+RING_BLUR_TEX1E,
+RING_BLUR_TEX1F,
+
+RING_BLUR_TEX2A,		//calculate blur on six pts around keypoint
+RING_BLUR_TEX2B,
+RING_BLUR_TEX2C,
+RING_BLUR_TEX2D,
+RING_BLUR_TEX2E,
+RING_BLUR_TEX2F,
+
+RECTIFY_TEX1,
+RECTIFY_TEX2,
+
+KERNEL_TEXV1,
+KERNEL_TEXV2,
+
+KERNEL_TEXH1,
+KERNEL_TEXH2,
+
+SIMPLE_TEX,
+
+TRUE_COLOR_TEX,
+
+SCENE_TEX,
+
+BIG_BLUR_TEX1,
+BIG_BLUR_TEX2,
+
+DESCRIPT_TEX1A,
+DESCRIPT_TEX1B,
+DESCRIPT_TEX1C,
+
+DESCRIPT_TEX2A,
+DESCRIPT_TEX2B,
+DESCRIPT_TEX2C,
+
+
+TEX_COUNT_TOTAL			//21
+};
+
+enum fboInfo
+{
+DERIVATIVE_FBO = 0,		//calculate contrast
+
+BLUR_FBO1,			//gaussian blur
+BLUR_FBO2,			
+
+HARRIS_CORNER_FBO,		//corner detect
+
+SUPPRESS_FBO1,
+SUPPRESS_FBO2,			//supress Image
+
+GRAYSCALE_FBO1,			//grayScale
+GRAYSCALE_FBO2,
+
+ORIENT_ASSIGN_FBO,		//calculate orientation of pixels
+
+RING_BLUR_FBO1,
+
+RING_BLUR_FBO2,
+
+RECTIFY_FBO1,
+RECTIFY_FBO2,
+
+KERNEL_FBOV1,
+KERNEL_FBOV2,
+
+KERNEL_FBOH1,
+KERNEL_FBOH2,
+
+SIMPLE_FBO,
+
+TRUE_COLOR_FBO,
+
+SCENE_FBO,
+
+BIG_BLUR_FBO1,
+BIG_BLUR_FBO2,
+
+DESCRIPT_FBO1,
+
+DESCRIPT_FBO2,
+
+FBO_COUNT_TOTAL			//9
+};
+
+#endif

@@ -1,0 +1,238 @@
+#include "../header/Matrix3f.h"
+
+Matrix3f::Matrix3f()
+{
+ //usually assumed to have all the elements of matrix set to zero
+ m[0][0] = 0.0;	m[0][1] = 0.0;	m[0][2] = 0.0;
+ m[1][0] = 0.0;	m[1][1] = 0.0;	m[1][2] = 0.0;
+ m[2][0] = 0.0;	m[2][1] = 0.0;	m[2][2] = 0.0;
+}
+
+Matrix3f::Matrix3f(float a00, float a01, float a02,
+		 float a10, float a11, float a12,
+		 float a20, float a21, float a22)
+{
+ m[0][0] = a00;	m[0][1] = a01;	m[0][2] = a02;
+ m[1][0] = a10;	m[1][1] = a11;	m[1][2] = a12;
+ m[2][0] = a20;	m[2][1] = a21;	m[2][2] = a22;
+}
+
+Matrix3f::Matrix3f(float mat[][3])
+{
+ m[0][0] = mat[0][0];	m[0][1] = mat[0][1];	m[0][2] = mat[0][2];
+ m[1][0] = mat[1][0];	m[1][1] = mat[1][1];	m[1][2] = mat[1][2];
+ m[2][0] = mat[2][0];	m[2][1] = mat[2][1];	m[2][2] = mat[2][2];
+}
+
+Matrix3f::Matrix3f(float *mat)
+{
+ m[0][0] = mat[0];	m[0][1] = mat[1];	m[0][2] = mat[2];
+ m[1][0] = mat[3];	m[1][1] = mat[4];	m[1][2] = mat[5];
+ m[2][0] = mat[6];	m[2][1] = mat[7];	m[2][2] = mat[8];
+
+}
+
+void Matrix3f::operator=(const Matrix3f mat)
+{
+ m[0][0] = mat.m[0][0];	m[0][1] = mat.m[0][1];	m[0][2] = mat.m[0][2];
+ m[1][0] = mat.m[1][0];	m[1][1] = mat.m[1][1];	m[1][2] = mat.m[1][2];
+ m[2][0] = mat.m[2][0];	m[2][1] = mat.m[2][1];	m[2][2] = mat.m[2][2];
+}
+
+void Matrix3f::operator=(const LMatrix3f mat)
+{
+ m[0][0] = mat.m[0][0];	m[0][1] = mat.m[0][1];	m[0][2] = mat.m[0][2];
+ m[1][0] = mat.m[1][0];	m[1][1] = mat.m[1][1];	m[1][2] = mat.m[1][2];
+ m[2][0] = mat.m[2][0];	m[2][1] = mat.m[2][1];	m[2][2] = mat.m[2][2];
+}
+
+void Matrix3f::SetIdentity()
+{
+ m[0][0] = 1.0;	m[0][1] = 0.0;	m[0][2] = 0.0;
+ m[1][0] = 0.0;	m[1][1] = 1.0;	m[1][2] = 0.0;
+ m[2][0] = 0.0;	m[2][1] = 0.0;	m[2][2] = 1.0;
+}
+
+void Matrix3f::SetZero()
+{
+ m[0][0] = 0.0;	m[0][1] = 0.0;	m[0][2] = 0.0;
+ m[1][0] = 0.0;	m[1][1] = 0.0;	m[1][2] = 0.0;
+ m[2][0] = 0.0;	m[2][1] = 0.0;	m[2][2] = 0.0;
+}
+void Matrix3f::Transpose()
+{
+ Matrix3f mat = *this;
+ m[0][0] = mat.m[0][0];	m[0][1] = mat.m[1][0];	m[0][2] = mat.m[2][0];
+ m[1][0] = mat.m[0][1];	m[1][1] = mat.m[1][1];	m[1][2] = mat.m[2][1];
+ m[2][0] = mat.m[0][2];	m[2][1] = mat.m[1][2];	m[2][2] = mat.m[2][2];
+}
+
+Matrix3f Matrix3f::ReturnTranspose()
+{
+ Matrix3f mat( m[0][0], m[1][0], m[2][0],
+		 m[0][1], m[1][1], m[2][1],
+ 		 m[0][2], m[1][2], m[2][2]);
+ return mat;
+}
+
+void Matrix3f::AsymmetricMatrix(vector3d vec)
+{
+ m[0][0] = 0.0;		m[0][1] = -vec.z;	m[0][2] = vec.y;
+ m[1][0] = vec.z;	m[1][1] = 0.0;		m[1][2] = -vec.x;
+ m[2][0] = -vec.y;	m[2][1] = vec.x;	m[2][2] = 0.0;
+
+}
+
+float Matrix3f::Determinant()
+{
+ float det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+		- m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+		+ m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+ return det;
+}
+
+Matrix3f Matrix3f::operator+(const Matrix3f mat)
+{
+ Matrix3f res;
+ res.m[0][0] = m[0][0] + mat.m[0][0];	 res.m[0][1] = m[0][1] + mat.m[0][1];	 res.m[0][2] = m[0][2] + mat.m[0][2];
+ res.m[1][0] = m[1][0] + mat.m[1][0];	 res.m[1][1] = m[1][1] + mat.m[1][1];	 res.m[1][2] = m[1][2] + mat.m[1][2];
+ res.m[2][0] = m[2][0] + mat.m[2][0];	 res.m[2][1] = m[2][1] + mat.m[2][1];	 res.m[2][2] = m[2][2] + mat.m[2][2];
+ return res;
+}
+
+Matrix3f Matrix3f::operator-(const Matrix3f mat)
+{
+ Matrix3f res;
+ res.m[0][0] = m[0][0] - mat.m[0][0];	 res.m[0][1] = m[0][1] - mat.m[0][1];	 res.m[0][2] = m[0][2] - mat.m[0][2];
+ res.m[1][0] = m[1][0] - mat.m[1][0];	 res.m[1][1] = m[1][1] - mat.m[1][1];	 res.m[1][2] = m[1][2] - mat.m[1][2];
+ res.m[2][0] = m[2][0] - mat.m[2][0];	 res.m[2][1] = m[2][1] - mat.m[2][1];	 res.m[2][2] = m[2][2] - mat.m[2][2];
+ return res;
+}
+
+Matrix3f Matrix3f::operator*(const Matrix3f mat)
+{
+ Matrix3f res;
+ sum = 0.0;
+ for(int i = 0; i < 3; i++)
+ {
+	for(int j = 0; j < 3; j++)
+	 res.m[i][j] = m[i][0] * mat.m[0][j] + m[i][1] * mat.m[1][j] + m[i][2] * mat.m[2][j];	 
+ }
+ return res;
+}
+
+vector3d Matrix3f::operator*(vector3d vec)
+{
+ float ret[3];
+	for(int i = 0; i < 3; i++)
+	{
+		sum = 0.0;
+		 for(int k = 0; k < 3; k++)
+		 sum += m[i][k] * vec.get(k);
+		ret[i] = sum;
+	}
+ return vector3d(ret);
+}
+
+
+Matrix3f Matrix3f::operator*(float var)
+{
+ Matrix3f res;
+ for(int i = 0; i < 3; i++)
+ {
+	for(int j = 0; j < 3; j++)
+	res.m[i][j] = m[i][j] * var;
+ }
+ return res;
+}
+
+Matrix3f Matrix3f::operator/(float var)
+{
+ Matrix3f res;
+ for(int i = 0; i < 3; i++)
+ {
+	for(int j = 0; j < 3; j++)
+	res.m[i][j] = m[i][j] / var;
+ }
+ return res;
+}
+
+
+bool Matrix3f::operator==(const Matrix3f mat)
+{
+ int i = 0, j = 0;
+ bool repeat = true;
+ while(i < 3 && repeat == true)
+ {
+	j = 0;
+	while(j < 3 && repeat == true)
+	{
+	 	if(m[i][j] != mat.m[i][j])
+		repeat = false;
+	 j++;
+	}	
+ i++;
+ }
+ return repeat;
+}
+
+void Matrix3f::Inverse()
+{
+ Matrix3f matA = *this;
+ float det = matA.Determinant();
+ if(det != 0.0)
+ {
+  m[0][0] = (matA.m[1][1] * matA.m[2][2] - matA.m[1][2] * matA.m[2][1])/det;
+  m[1][0] = (matA.m[2][0] * matA.m[1][2] - matA.m[2][2] * matA.m[1][0])/det;
+  m[2][0] = (matA.m[1][0] * matA.m[2][1] - matA.m[1][1] * matA.m[2][0])/det;
+
+  m[0][1] = (matA.m[2][1] * matA.m[0][2] - matA.m[2][2] * matA.m[0][1])/det;
+  m[1][1] = (matA.m[0][0] * matA.m[2][2] - matA.m[0][2] * matA.m[2][0])/det;
+  m[2][1] = (matA.m[2][0] * matA.m[0][1] - matA.m[2][1] * matA.m[0][0])/det;
+
+  m[0][2] = (matA.m[0][1] * matA.m[1][2] - matA.m[1][1] * matA.m[0][2])/det;
+  m[1][2] = (matA.m[1][0] * matA.m[0][2] - matA.m[0][0] * matA.m[1][2])/det;
+  m[2][2] = (matA.m[0][0] * matA.m[1][1] - matA.m[1][0] * matA.m[0][1])/det;
+ }
+ else if(det == 0.0)
+	std::cout<<std::endl<<" determinant of Matrix is 0.0, non-invertible"<<std::endl;
+}
+
+Matrix3f Matrix3f::ReturnSymmetric()
+{
+ Matrix3f dumb = *this;
+ Matrix3f tDumb = dumb.ReturnTranspose();
+ return (tDumb * dumb);
+}
+
+void Matrix3f::Display()
+{
+ for(int i = 0; i < 3; i++)
+ {
+	std::cout<<std::endl;
+	for(int j = 0; j < 3; j++)
+	std::cout<<"   "<<m[i][j]<<"  ";
+ }
+	std::cout<<std::endl;
+}
+
+void Matrix3f::Display(const char* name)
+{
+ for(int i = 0; i < 3; i++)
+ {
+	std::cout<<std::endl;
+	for(int j = 0; j < 3; j++)
+	std::cout<<"   "<<name<<"["<<i<<"]["<<j<<"] = "<<m[i][j]<<"  ";
+ }
+	std::cout<<std::endl;
+}
+
+vector3d& Matrix3f::getRow(int rowID)
+{
+ row = vector3d(m[rowID][0], m[rowID][1], m[rowID][2]);
+ return row;
+}
+
+
+
+
